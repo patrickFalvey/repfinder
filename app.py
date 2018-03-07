@@ -1,10 +1,12 @@
 """
 This script will be used to acquire State Assembly and Senate representative information from http://findyourrep.legislature.ca.gov/
-Ideally this script would use a command argument to allow for usage in different states.
+The input file name will be used as a command line argument when running the script.
+
+Example: 'python app.py test.xlsx'
 """
 
 
-from bs4 import BeautifulSoup
+from bs4 import BeautifulSoup, SoupStrainer
 import mechanize
 from time import sleep
 from selenium import webdriver
@@ -14,6 +16,9 @@ from selenium.webdriver.common.by import By
 import sys
 import urllib, urllib2
 import pandas as pd
+import numpy as np
+import seaborn as sns
+from multiprocessing import Pool
 
 URL = r"http://findyourrep.legislature.ca.gov/"
 
@@ -34,26 +39,64 @@ def get_input_file():
 
 
 # Parse input file rows into Street Address, City and Zip data
-def parse_address_info():
-    df = get_input_file()
+def parse_address_info(dataframe=None):
+    df = dataframe
 
-    for index, row in df.iterrows():
-        try:
-            name = row['Name']
-            street = row['Street Address']
-            city = row['City']
-            zip = row['Zip']
+    if df:
+        for index, row in df.iterrows():
+            if row['State'] == 'CA':
+                try:
+                    street = row['Street']
+                    city = row['City']
+                    zip = row['Zip']
+                    line = {}
 
-            site_response = get_rep_info(name, street, city, zip)
+                    site_response = get_rep_info(street, city, zip)
 
-            soup = BeautifulSoup(site_response, 'html.parser')
+                    soup = BeautifulSoup(site_response, "html5lib")
+                    for link in soup.find('div', id='tabResults'):
+                        if link.contents:
+                            try:
+                                if 'Assembly (District' in link.contents[0]:
+                                    df.loc[index, 'Assembly District'] = link.contents[0][-3:-1]
+                                    print link.contents[0][-3:-1]
+                            except:
+                                pass
 
-        except Exception, e:
-            print e
+                            try:
+                                if 'Senate (District' in link.contents[0]:
+                                    df.loc[index, 'Senate District'] = link.contents[0][-3:-1]
+                                    print link.contents[0][-3:-1]
+                            except:
+                                pass
+
+                            try:
+                                if len(link.contents) > 1 and 'Assembly Member ' in link.contents[1].get_text():
+                                    df.loc[index, 'Assembly Member'] = link.contents[1].get_text().split('Assembly Member ')[1]
+                                    print link.contents[1].get_text().split('Assembly Member ')[1]
+                                    print row['Assembly Member']
+                            except:
+                                pass
+
+                            try:
+                                if len(link.contents) > 1 and 'Senator ' in link.contents[1].get_text():
+                                    df.loc[index, 'State Senator'] = link.contents[1].get_text().split('Senator ')[1]
+                                    print link.contents[1].get_text().split('Senator ')[1]
+                            except:
+                                pass
+
+                except Exception, e:
+                    print e
+
+                df.append(line, ignore_index=True)
+
+    writer = pd.ExcelWriter("output/output" + sys.argv[1])
+    df.to_excel(writer, 'Sheet 1')
+    writer.save()
 
 
 #  Submit Address data to  http://findyourrep.legislature.ca.gov/
-def get_rep_info(name=None, street=None, city=None, zip=None):
+def get_rep_info(street=None, city=None, zip=None):
     try:
         driver = webdriver.Chrome()
         driver.get(URL)
@@ -70,10 +113,7 @@ def get_rep_info(name=None, street=None, city=None, zip=None):
         # Submit form
         locate_button.click()
 
-        element_present = EC.presence_of_element_located((By.ID, 'element_id'))
-        timeout = 2
-        # WebDriverWait(driver, timeout).until(element_present)
-        sleep(4)
+        sleep(2)
         response = driver.page_source
 
         return response
